@@ -489,13 +489,30 @@ function renderSignIn(){
       <div id="gSignInDiv"></div>
     </div>
   `;
+  initGoogleButton();
+}
+
+function initGoogleButton(attempt){
+  attempt = attempt || 0;
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.id){
+    if(attempt > 100){
+      const div = document.getElementById('gSignInDiv');
+      if(div) div.innerHTML = '<p style="color:var(--red); font-size:0.85rem;">Sign-in failed to load. Please check your internet connection and refresh the page.</p>';
+      return;
+    }
+    setTimeout(() => initGoogleButton(attempt + 1), 100);
+    return;
+  }
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: handleCredentialResponse
   });
-  google.accounts.id.renderButton(document.getElementById('gSignInDiv'), {
-    theme: 'outline', size: 'large', width: 280
-  });
+  const div = document.getElementById('gSignInDiv');
+  if(div){
+    google.accounts.id.renderButton(div, {
+      theme: 'outline', size: 'large', width: 280
+    });
+  }
 }
 
 function signOut(){
