@@ -440,6 +440,30 @@ function fmtTime(sec){
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
+// Chrome/Edge often write inaccurate (or Infinity) duration metadata into
+// webm files produced by MediaRecorder. Seeking to a huge timestamp forces
+// the browser to rescan the file and fix its internal duration, after which
+// we seek back to the start. This only affects the player's own duration
+// readout — it doesn't touch the recording itself.
+function fixAudioDuration(audioEl){
+  if(!audioEl) return;
+  const trySeek = () => {
+    // Seeking past the end forces Chrome/Edge to rescan the file and settle
+    // on the real duration (whether it previously read Infinity, NaN, or a
+    // short/incorrect number), then we snap playback back to the start.
+    audioEl.currentTime = 1e101;
+    audioEl.addEventListener('timeupdate', function onTick(){
+      audioEl.removeEventListener('timeupdate', onTick);
+      audioEl.currentTime = 0;
+    });
+  };
+  if(audioEl.readyState > 0){
+    trySeek();
+  }else{
+    audioEl.addEventListener('loadedmetadata', trySeek, { once: true });
+  }
+}
+
 function goTo(step){ state.step = step; render(); }
 
 function render(){
@@ -663,7 +687,7 @@ function renderRecord(panel, kind){
       <div class="rec-controls" id="recControls">
         <button class="rec-btn" id="recBtn" title="${hasRecording ? 'Re-record' : 'Start recording'}">${hasRecording ? '↻' : '●'}</button>
       </div>
-      ${hasRecording ? `<audio controls src="${URL.createObjectURL(blob)}"></audio>
+      ${hasRecording ? `<audio controls id="recAudio" src="${URL.createObjectURL(blob)}"></audio>
       <div class="redo-row"><button class="link-btn" id="redoBtn">Discard and record again</button></div>` : ''}
     </div>
 
@@ -685,6 +709,7 @@ function renderRecord(panel, kind){
       else{ state.soapBlob = null; state.soapDuration = 0; }
       render();
     };
+    fixAudioDuration(document.getElementById('recAudio'));
   }
 
   function finalizeRecording(){
