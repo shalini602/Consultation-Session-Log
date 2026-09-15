@@ -411,7 +411,8 @@ let state = {
   consultDuration: 0,
   soapBlob: null,
   soapDuration: 0,
-  qc: { audioUsable: false, soapComplete: false, noIdentifiers: false }
+  qc: { audioUsable: false, soapComplete: false, noIdentifiers: false },
+  audioUploadConfirmed: false
 };
 
 function genVisitId(){
@@ -823,6 +824,7 @@ function renderPackage(panel){
     consultDurationSeconds: state.consultDuration,
     soapDurationSeconds: state.soapDuration,
     qc: state.qc,
+    audioUploadConfirmed: state.audioUploadConfirmed,
     packagedAt: new Date().toISOString()
   };
   const metaBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
@@ -858,6 +860,10 @@ function renderPackage(panel){
       <b>Step 2 — Log the session:</b> click "Submit session details" below to automatically add this visit's details to the tracking spreadsheet. This does not send the audio itself — only the visit ID, timings, and checklist answers.
     </div>
 
+    <div class="qc-list" style="margin-top:18px;">
+      <label><input type="checkbox" id="uploadConfirm" ${state.audioUploadConfirmed ? 'checked' : ''}> I have uploaded both audio files to the Drive folder</label>
+    </div>
+
     <div id="submitArea" style="margin-top:18px;"></div>
 
     <div class="actions">
@@ -865,6 +871,16 @@ function renderPackage(panel){
       <button class="btn primary" id="newBtn">Start next session</button>
     </div>
   `;
+  document.getElementById('uploadConfirm').onchange = (e) => {
+    state.audioUploadConfirmed = e.target.checked;
+    metadata.audioUploadConfirmed = state.audioUploadConfirmed;
+    // Keep the downloadable metadata JSON in sync with the latest checkbox state.
+    const updatedMetaBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+    const metaLink = document.querySelector(`a[download="${base}_metadata.json"]`);
+    if(metaLink) metaLink.href = URL.createObjectURL(updatedMetaBlob);
+    const submitBtn = document.getElementById('submitBtn');
+    if(submitBtn) submitBtn.disabled = !state.audioUploadConfirmed;
+  };
   document.getElementById('backBtn').onclick = () => goTo(4);
   document.getElementById('newBtn').onclick = () => {
     clearProgress();
@@ -873,7 +889,8 @@ function renderPackage(panel){
       doctorEmail: state.doctorEmail, googleIdToken: state.googleIdToken,
       consentGiven: false, consentTimestamp: null,
       consultBlob: null, consultDuration: 0, soapBlob: null, soapDuration: 0,
-      qc: { audioUsable: false, soapComplete: false, noIdentifiers: false }
+      qc: { audioUsable: false, soapComplete: false, noIdentifiers: false },
+      audioUploadConfirmed: false
     };
     render();
   };
@@ -885,8 +902,12 @@ function renderPackage(panel){
     return;
   }
 
-  submitArea.innerHTML = `<button class="btn primary" id="submitBtn" style="width:100%;">Submit session details</button>`;
+  submitArea.innerHTML = `<button class="btn primary" id="submitBtn" style="width:100%;" ${state.audioUploadConfirmed ? '' : 'disabled'}>Submit session details</button>`;
   document.getElementById('submitBtn').onclick = async () => {
+    if(!state.audioUploadConfirmed){
+      alert('Please confirm you\'ve uploaded both audio files to the Drive folder before submitting.');
+      return;
+    }
     const btn = document.getElementById('submitBtn');
     btn.disabled = true;
     btn.textContent = 'Submitting…';
@@ -897,6 +918,7 @@ function renderPackage(panel){
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           ...metadata,
+          audioUploadConfirmed: state.audioUploadConfirmed,
           consultFilename,
           soapFilename
         })
