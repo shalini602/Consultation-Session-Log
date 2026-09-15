@@ -384,7 +384,7 @@
 // Paste the Google Apps Script Web App URL here after deploying it (see setup guide).
 // Leave as empty string if not set up yet — the tool will still work, it just
 // won't auto-fill a spreadsheet, and will remind the doctor to log details manually.
-const SHEET_WEBHOOK_URL = "";
+const SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxVImlHCSAvPZ6KxGNN92ulrG79MIpJ00F3RIwiLgYd9atyjZF95Y-J6aJBxSjU6wYI/exec";
 
 // Optional: paste a shared Google Drive folder link here so doctors have a
 // one-click way to open the right folder for uploading audio files.
@@ -633,7 +633,7 @@ function renderConsent(panel){
 
 // ---------- Steps 2 & 3: Recording ----------
 let mediaRecorder = null, chunks = [], recTimerInterval = null, recSeconds = 0, activeStream = null,
-    isPaused = false, segments = [], pendingFinalStop = true;
+    isPaused = false;
 
 function renderRecord(panel, kind){
   const isConsult = kind === 'consult';
@@ -686,37 +686,14 @@ function renderRecord(panel, kind){
     };
   }
 
-  // Starts one recording segment on the given stream. Called both for the
-  // very first segment and again each time the doctor resumes after a pause.
-  function startSegment(stream){
-    chunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = e => { if(e.data && e.data.size > 0) chunks.push(e.data); };
-    mediaRecorder.onstop = () => {
-      segments.push(new Blob(chunks, { type: 'audio/webm' }));
-      if(pendingFinalStop){
-        const fullBlob = new Blob(segments, { type: 'audio/webm' });
-        if(isConsult){ state.consultBlob = fullBlob; state.consultDuration = recSeconds; }
-        else{ state.soapBlob = fullBlob; state.soapDuration = recSeconds; }
-        if(activeStream) activeStream.getTracks().forEach(t => t.stop());
-        clearInterval(recTimerInterval);
-        segments = [];
-        isPaused = false;
-        render();
-      }else{
-        // This stop was just a pause: keep the microphone stream open,
-        // update the UI in place, and wait for the doctor to resume.
-        isPaused = true;
-        clearInterval(recTimerInterval);
-        const label = document.getElementById('recLabel');
-        const indicator = document.getElementById('recIndicator');
-        const pauseBtn = document.getElementById('pauseBtn');
-        if(label) label.textContent = 'Paused';
-        if(indicator) indicator.classList.remove('live');
-        if(pauseBtn){ pauseBtn.textContent = '▶'; pauseBtn.title = 'Resume recording'; }
-      }
-    };
-    mediaRecorder.start();
+  function finalizeRecording(){
+    const fullBlob = new Blob(chunks, { type: 'audio/webm' });
+    if(isConsult){ state.consultBlob = fullBlob; state.consultDuration = recSeconds; }
+    else{ state.soapBlob = fullBlob; state.soapDuration = recSeconds; }
+    if(activeStream) activeStream.getTracks().forEach(t => t.stop());
+    clearInterval(recTimerInterval);
+    isPaused = false;
+    render();
   }
 
   function tickTimer(){
@@ -728,22 +705,12 @@ function renderRecord(panel, kind){
   }
 
   document.getElementById('recBtn').onclick = async () => {
-    const inProgress = mediaRecorder && (mediaRecorder.state === 'recording' || isPaused);
+    const inProgress = mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused');
     if(inProgress){
-      // Final stop: if actively recording, stop the recorder (onstop will finalize).
-      // If currently paused, the last segment is already captured, so finalize immediately.
-      pendingFinalStop = true;
-      if(mediaRecorder.state === 'recording'){
-        mediaRecorder.stop();
-      }else{
-        const fullBlob = new Blob(segments, { type: 'audio/webm' });
-        if(isConsult){ state.consultBlob = fullBlob; state.consultDuration = recSeconds; }
-        else{ state.soapBlob = fullBlob; state.soapDuration = recSeconds; }
-        if(activeStream) activeStream.getTracks().forEach(t => t.stop());
-        segments = [];
-        isPaused = false;
-        render();
-      }
+      // Final stop, whether we're actively recording or currently paused.
+      // onstop fires either way and finalizes the single combined recording.
+      clearInterval(recTimerInterval);
+      mediaRecorder.stop();
       return;
     }
     try{
@@ -752,11 +719,13 @@ function renderRecord(panel, kind){
       alert('Microphone access is required to record. Please allow microphone permission and try again.');
       return;
     }
-    segments = [];
+    chunks = [];
     recSeconds = 0;
     isPaused = false;
-    pendingFinalStop = false;
-    startSegment(activeStream);
+    mediaRecorder = new MediaRecorder(activeStream);
+    mediaRecorder.ondataavailable = e => { if(e.data && e.data.size > 0) chunks.push(e.data); };
+    mediaRecorder.onstop = finalizeRecording;
+    mediaRecorder.start();
 
     document.getElementById('recIndicator').classList.add('live');
     document.getElementById('recLabel').textContent = 'Recording';
@@ -773,13 +742,17 @@ function renderRecord(panel, kind){
     pauseBtn.textContent = '❚❚';
     pauseBtn.onclick = () => {
       if(!isPaused){
-        // Pause = stop this segment's recorder without finalizing, keep the
-        // microphone stream open so we can start a new segment on resume.
-        pendingFinalStop = false;
-        mediaRecorder.stop();
+        // Native pause: keeps the same recording/stream going, just stops
+        // capturing audio until resumed — no separate files to stitch together.
+        mediaRecorder.pause();
+        isPaused = true;
+        clearInterval(recTimerInterval);
+        document.getElementById('recLabel').textContent = 'Paused';
+        document.getElementById('recIndicator').classList.remove('live');
+        pauseBtn.textContent = '▶';
+        pauseBtn.title = 'Resume recording';
       }else{
-        pendingFinalStop = false;
-        startSegment(activeStream);
+        mediaRecorder.resume();
         isPaused = false;
         pauseBtn.textContent = '❚❚';
         pauseBtn.title = 'Pause';
